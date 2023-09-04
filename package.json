@@ -5,6 +5,10 @@
   "repository": "https://github.com/ex3ndr/hamster-cnc.git",
   "author": "Steve Korshakov <steve@korshakov.com>",
   "license": "MIT",
+  "scripts": {
+    "play": "ts-node ./playground/main.ts",
+    "test": "jest"
+  },
   "devDependencies": {
     "@types/jest": "^29.5.4",
     "@types/node": "^20.5.9",
