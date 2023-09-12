@@ -15,7 +15,7 @@ export async function openSocketStream(host: string, port: number): Promise<Seri
     socket.on('data', (data) => {
         if (!closed) {
             log('SocketConnector', `Receive: ${data.toString()}`);
-            log('SocketConnector', `Receive(bin): ${data.toString('hex')}`);
+            // log('SocketConnector', `Receive(bin): ${data.toString('hex')}`);
             buffer = Buffer.concat([buffer, data]);
             let aw = bufferAwaiter;
             if (aw) {

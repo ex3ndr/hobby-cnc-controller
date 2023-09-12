@@ -10,6 +10,29 @@ const XMODEM_NAK = 0x15;
 const XMODEM_CAN = 0x16;
 const XMODEM_CRC = 0x43;
 
+export function xmodemChecksum8bit(src: Buffer) {
+    let acc = 0;
+    for (let i = 0; i < src.length; i++) {
+        acc = (acc + src.at(i)!) & 255;
+    }
+    return acc & 255;
+}
+
+export function xmodemChecksum16bit(src: Buffer) {
+    let acc = 0;
+    for (let i = 0; i < src.length; i++) {
+        acc = acc ^ ((src.at(i)!) << 8);
+        for (let j = 0; j < 8; j++) {
+            if (acc & 0x8000) {
+                acc = acc << 1 ^ 0x1021;
+            } else {
+                acc = acc << 1;
+            }
+        }
+    }
+    return acc & 0xFFFF;
+}
+
 export async function downloadXMODEMFile(src: SerialStream, crc: 'simple' | '16bit' = 'simple', md5: 'skip' | 'none' | Buffer = 'none') {
 
     // Send request
@@ -53,17 +76,24 @@ export async function downloadXMODEMFile(src: SerialStream, crc: 'simple' | '16b
         let data = await src.read(/* Package Length */(mode === 'normal' ? 1 : 2) + /* Package body */(mode === 'normal' ? 128 : 8192) + /* CRC */ (crc === 'simple' ? 1 : 2));
 
         // Check CRC
-        // if (crc === 'simple') {
-        //     let acc = 0; // XMODEM_STX + (receivedBlock % 256) + (receivedBlockCheck % 256);
-        //     for (let i = 0; i < data.length - 1; i++) {
-        //         acc = (acc + data.at(i)!) % 256;
-        //     }
-        //     if (acc !== data.at(data.length - 1)!) {
-        //         log('XMODEM', data.toString('hex'));
-        //         throw new Error('Checksum failed, expected ' + acc + '; got ' + data.at(data.length - 1));
-        //     }
-        //     data = data.subarray(0, data.length - 1);
-        // }
+        if (crc === 'simple') {
+            let acc = xmodemChecksum8bit(data.subarray(0, data.length - 1));
+            if (acc !== data.at(data.length - 1)!) {
+                log('XMODEM', data.toString('hex'));
+                throw new Error('Checksum failed, expected ' + acc + '; got ' + data.at(data.length - 1));
+            }
+            data = data.subarray(0, data.length - 1);
+        } else if (crc === '16bit') {
+            let acc = xmodemChecksum16bit(data.subarray(0, data.length - 2));
+            let crc = (data.at(data.length - 2)! << 8) + (data.at(data.length - 1)!);
+            if (acc !== crc) {
+                log('XMODEM', data.toString('hex'));
+                throw new Error('Checksum failed, expected ' + acc + '; got ' + crc);
+            }
+            data = data.subarray(0, data.length - 2);
+        } else {
+            throw new Error('Unknown CRC mode: ' + crc);
+        }
 
         // Remove padding
         if (mode === '8k') {
