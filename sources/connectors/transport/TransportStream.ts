@@ -17,6 +17,20 @@ export class TransportStream {
         this.transport.send(data);
     }
 
+    async peekBytes(size: number) {
+        return await this.lock.inLock(async () => {
+
+            // Populate cache
+            while (this.buffer.length < size) {
+                let b = await this.transport.read();
+                this.buffer = Buffer.concat([this.buffer, b]);
+            }
+
+            // Read buffer
+            return this.buffer.subarray(0, size);
+        });
+    }
+
     async readBytes(size: number) {
         return await this.lock.inLock(async () => {
 
@@ -27,8 +41,8 @@ export class TransportStream {
             }
 
             // Read buffer
-            let result = this.buffer.subarray(0, length);
-            this.buffer = this.buffer.subarray(length);
+            let result = this.buffer.subarray(0, size);
+            this.buffer = this.buffer.subarray(size);
             return result;
         });
     }

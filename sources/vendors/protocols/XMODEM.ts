@@ -1,14 +1,14 @@
+import { TransportStream } from "../../connectors/transport/TransportStream";
 import { log } from "../../utils/log";
-import { TransportStream } from "../transport/TransportStream";
 
-const XMODEM_SOH = 0x01;
-const XMODEM_STX = 0x02;
-const XMODEM_EOT = 0x04;
-const XMODEM_ACK = 0x06;
-const XMODEM_DLE = 0x10;
-const XMODEM_NAK = 0x15;
-const XMODEM_CAN = 0x16;
-const XMODEM_CRC = 0x43;
+export const XMODEM_SOH = 0x01;
+export const XMODEM_STX = 0x02;
+export const XMODEM_EOT = 0x04;
+export const XMODEM_ACK = 0x06;
+export const XMODEM_DLE = 0x10;
+export const XMODEM_NAK = 0x15;
+export const XMODEM_CAN = 0x16;
+export const XMODEM_CRC = 0x43;
 
 export function xmodemChecksum8bit(src: Buffer) {
     let acc = 0;

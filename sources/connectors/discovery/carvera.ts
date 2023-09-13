@@ -66,19 +66,24 @@ export class CarveraDiscovery implements Discovery {
                     existingHost.timeout = null;
                 }
                 changed = true;
-                log('carvera', 'Device ' + existingHost.name + ' disconnected');
+                log('carvera', 'Device ' + existingHost.name + ' disappeared');
             }
 
             // Apply if existing
             let item = this.found.find((v) => v.name === name);
             if (item) {
                 if (!(item.host === host && item.port === port && item.busy === busy && item.active)) {
+                    if (!item.active) {
+                        log('carvera', 'Device ' + item.name + ' available');
+                    }
+                    if (item.busy !== busy) {
+                        log('carvera', 'Device ' + item.name + ' ' + (busy ? 'busy' : 'available'));
+                    }
                     item.host = host;
                     item.port = port;
                     item.busy = busy;
                     item.active = true;
                     changed = true;
-                    log('carvera', 'Device ' + item.name + ' connected');
                 }
             } else {
                 item = {
@@ -90,7 +95,7 @@ export class CarveraDiscovery implements Discovery {
                     busy
                 }
                 this.found.push(item);
-                log('carvera', 'Device ' + item.name + ' connected');
+                log('carvera', 'Device ' + item.name + ' ' + (busy ? 'busy' : 'available'));
                 changed = true;
             }
 

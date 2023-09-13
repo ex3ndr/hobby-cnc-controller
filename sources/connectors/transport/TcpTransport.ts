@@ -57,8 +57,8 @@ export class TcpTransport implements Transport {
 
         // Handle closed
         this.socket.on('close', () => {
-            if (!closed) {
-                closed = true;
+            if (!this.closed) {
+                this.closed = true;
                 let aw = this.bufferAwaiter;
                 if (aw) {
                     this.bufferAwaiter = null;
@@ -76,7 +76,7 @@ export class TcpTransport implements Transport {
 
     async read(): Promise<Buffer> {
         return await this.readLock.inLock(async () => {
-            if (closed) {
+            if (this.closed) {
                 throw Error('Connection closed');
             }
 
