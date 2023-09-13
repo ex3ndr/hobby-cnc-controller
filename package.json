@@ -6,6 +6,7 @@
   "author": "Steve Korshakov <steve@korshakov.com>",
   "license": "MIT",
   "scripts": {
+    "dev": "ts-node ./sources/main.ts",
     "play": "ts-node ./playground/main.ts",
     "test": "jest"
   },
