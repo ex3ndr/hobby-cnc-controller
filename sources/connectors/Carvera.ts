@@ -1,19 +1,21 @@
 import { AsyncLock } from "../utils/lock";
 import { Connector } from "./Connector";
 import { downloadXMODEMFile } from "./net/XMODEM";
-import { openSocketStream } from "./net/openSocketStream";
+import { TcpTransport } from "./transport/TcpTransport";
+import { TransportStream } from "./transport/TransportStream";
 
 export async function openCarvera(host: string): Promise<Connector> {
 
     // Create a socket connection to the Carvera
-    const socket = await openSocketStream(host, 2222);
+    const transport = await TcpTransport.open(host, 2222);
+    const stream = new TransportStream(transport);
     const lock = new AsyncLock();
 
     return {
         async downloadFile(path: string) {
             return await lock.inLock(async () => {
-                socket.send(Buffer.from('download ' + path + '\n'));
-                return await downloadXMODEMFile(socket, '16bit', 'skip');
+                stream.send('download ' + path + '\n');
+                return await downloadXMODEMFile(stream, '16bit', 'skip');
             });
         },
         async command(command) {
@@ -21,8 +23,8 @@ export async function openCarvera(host: string): Promise<Connector> {
                 throw new Error('Command cannot contain newlines');
             }
             return await lock.inLock(async () => {
-                socket.send(Buffer.from(command + '\n'));
-                let res = await socket.readUntil('\n'.charCodeAt(0));
+                stream.send(command + '\n');
+                let res = await stream.readUntil('\n'.charCodeAt(0));
                 return res.subarray(0, res.length - 1).toString();
             });
         },

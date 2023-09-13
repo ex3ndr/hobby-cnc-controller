@@ -1,5 +1,5 @@
 import { log } from "../../utils/log";
-import { SerialStream } from "./SerialStream";
+import { TransportStream } from "../transport/TransportStream";
 
 const XMODEM_SOH = 0x01;
 const XMODEM_STX = 0x02;
@@ -33,7 +33,7 @@ export function xmodemChecksum16bit(src: Buffer) {
     return acc & 0xFFFF;
 }
 
-export async function downloadXMODEMFile(src: SerialStream, crc: 'simple' | '16bit' = 'simple', md5: 'skip' | 'none' | Buffer = 'none') {
+export async function downloadXMODEMFile(src: TransportStream, crc: 'simple' | '16bit' = 'simple', md5: 'skip' | 'none' | Buffer = 'none') {
 
     // Send request
     src.send(Buffer.from([crc === 'simple' ? XMODEM_NAK : XMODEM_CRC]));
@@ -45,7 +45,7 @@ export async function downloadXMODEMFile(src: SerialStream, crc: 'simple' | '16b
 
         // Read block
         let mode: 'normal' | '8k';
-        let char = (await src.read(1)).at(0);
+        let char = (await src.readBytes(1)).at(0);
         if (char === XMODEM_SOH) {
             mode = 'normal';
         } else if (char === XMODEM_STX) {
@@ -60,11 +60,11 @@ export async function downloadXMODEMFile(src: SerialStream, crc: 'simple' | '16b
         }
 
         // Read block number
-        let receivedBlock = (await src.read(1)).at(0)!;
+        let receivedBlock = (await src.readBytes(1)).at(0)!;
         if (receivedBlock !== blockNumber) {
             throw new Error('expected block number ' + blockNumber + '; got ' + receivedBlock);
         }
-        let receivedBlockCheck = (await src.read(1)).at(0)!;
+        let receivedBlockCheck = (await src.readBytes(1)).at(0)!;
         if (receivedBlock + receivedBlockCheck !== 255) {
             throw new Error('Block number check failed');
         }
@@ -73,7 +73,7 @@ export async function downloadXMODEMFile(src: SerialStream, crc: 'simple' | '16b
         }
 
         // Read block data
-        let data = await src.read(/* Package Length */(mode === 'normal' ? 1 : 2) + /* Package body */(mode === 'normal' ? 128 : 8192) + /* CRC */ (crc === 'simple' ? 1 : 2));
+        let data = await src.readBytes(/* Package Length */(mode === 'normal' ? 1 : 2) + /* Package body */(mode === 'normal' ? 128 : 8192) + /* CRC */ (crc === 'simple' ? 1 : 2));
 
         // Check CRC
         if (crc === 'simple') {
