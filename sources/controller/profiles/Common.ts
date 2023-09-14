@@ -1,3 +1,5 @@
+import { TransportStream } from "../../connectors/transport/TransportStream";
+
 export type FileEntry = {
     kind: 'directory',
     name: string
@@ -40,3 +42,8 @@ export type MachineState = {
         offset: number
     }
 }
+
+export interface Profile {
+    readState(): Promise<MachineState>;
+    disconnect(): Promise<void>;
+};

@@ -1,8 +1,8 @@
-import { DiscoveredDevice } from "../connectors/Discovery";
-import { TcpTransport } from "../connectors/transport/TcpTransport";
-import { TransportStream } from "../connectors/transport/TransportStream";
-import { AsyncLock } from "../utils/lock";
-import { FileEntry, MachineState, MachineStatus } from "./Common";
+import { DeviceTransport, DiscoveredDevice } from "../../connectors/Discovery";
+import { TcpTransport } from "../../connectors/transport/TcpTransport";
+import { TransportStream } from "../../connectors/transport/TransportStream";
+import { AsyncLock } from "../../utils/lock";
+import { FileEntry, MachineState, MachineStatus, Profile } from "./Common";
 import { XMODEM_CAN, XMODEM_SOH, XMODEM_STX } from "./protocols/XMODEM";
 
 type CarveraFrame = {
@@ -14,20 +14,19 @@ type CarveraFrame = {
     value: string
 }
 
-export class Carvera {
+export class Carvera implements Profile {
 
     static isSupported(device: DiscoveredDevice) {
         return device.vendor === 'carvera' && device.transport.type === 'tcp';
     }
 
-    static async create(device: DiscoveredDevice) {
+    static async create(deviceTransport: DeviceTransport) {
 
         // Check if device is supported
-        if (device.transport.type !== 'tcp') throw new Error('Only TCP is supported');
-        if (device.vendor !== 'carvera') throw new Error('Only Carvera is supported');
+        if (deviceTransport.type !== 'tcp') throw new Error('Only TCP is supported');
 
         // Create a stream
-        let transport = await TcpTransport.open(device.transport.host, device.transport.port);
+        let transport = await TcpTransport.open(deviceTransport.host, deviceTransport.port);
         let stream = new TransportStream(transport);
 
         // Create instance
@@ -241,6 +240,12 @@ export class Carvera {
 
             // Return result
             return version;
+        });
+    }
+
+    async disconnect() {
+        return await this.lock.inLock(async () => {
+            // await this.stream.close();
         });
     }
 

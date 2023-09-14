@@ -2,8 +2,10 @@ import { SerialPort } from 'serialport';
 import { backoff, delay } from "../../utils/time";
 import type { Discovery, DiscoveredDevice } from "../Discovery";
 import { log } from '../../utils/log';
+import { randomKey } from '../../utils/random';
 
 type SerialDevice = {
+    id: string,
     path: string;
     active: boolean;
 }
@@ -16,6 +18,7 @@ export class SerialDiscovery implements Discovery {
         for (let d of devices) {
             if (d.path !== '/dev/ttyAMA0') {
                 res.push({
+                    id: randomKey(),
                     path: d.path,
                     active: true
                 })
@@ -38,8 +41,8 @@ export class SerialDiscovery implements Discovery {
                     type: 'serial',
                     path: d.path
                 },
+                id: d.id,
                 name: 'USB Machine',
-                key: 'serial:' + d.path,
                 state: d.active ? 'active' : 'inactive',
                 vendor: 'unknown'
             })

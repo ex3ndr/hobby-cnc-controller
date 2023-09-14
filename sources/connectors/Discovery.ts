@@ -16,9 +16,9 @@ export type DeviceTransport = {
 }
 
 export interface DiscoveredDevice {
+    readonly id: string;
     readonly transport: DeviceTransport;
     readonly name: string;
-    readonly key: string;
     readonly vendor: Vendor;
     readonly state: 'active' | 'inactive' | 'busy';
 }

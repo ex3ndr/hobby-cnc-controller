@@ -2,8 +2,10 @@ import UDP from 'dgram';
 import { delay } from "../../utils/time";
 import type { Discovery, DiscoveredDevice } from "../Discovery";
 import { log } from '../../utils/log';
+import { randomKey } from '../../utils/random';
 
 type CarveraDevice = {
+    id: string;
     timeout: any;
     host: string;
     port: number;
@@ -32,7 +34,7 @@ export class CarveraDiscovery implements Discovery {
                     port: d.port
                 },
                 name: d.name,
-                key: 'carvera:' + d.name,
+                id: d.id,
                 state: d.active ? (d.busy ? 'busy' : 'active') : 'inactive',
                 vendor: 'carvera'
             });
@@ -87,6 +89,7 @@ export class CarveraDiscovery implements Discovery {
                 }
             } else {
                 item = {
+                    id: randomKey(),
                     timeout: null,
                     host,
                     port,
