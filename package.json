@@ -1,8 +1,8 @@
 {
-  "name": "hamster-cnc",
+  "name": "hobby-cnc-controller",
   "version": "1.0.0",
   "main": "index.js",
-  "repository": "https://github.com/ex3ndr/hamster-cnc.git",
+  "repository": "https://github.com/ex3ndr/hobby-cnc-controller.git",
   "author": "Steve Korshakov <steve@korshakov.com>",
   "license": "MIT",
   "scripts": {
