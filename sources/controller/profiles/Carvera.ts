@@ -1,8 +1,10 @@
 import { DeviceTransport, DiscoveredDevice } from "../../connectors/Discovery";
 import { TcpTransport } from "../../connectors/transport/TcpTransport";
 import { TransportStream } from "../../connectors/transport/TransportStream";
+import { isGCode } from "../../utils/isGCode";
 import { AsyncLock } from "../../utils/lock";
 import { FileEntry, MachineState, MachineStatus, Profile } from "./Common";
+import { MachineError } from "./_errors";
 import { XMODEM_CAN, XMODEM_SOH, XMODEM_STX } from "./protocols/XMODEM";
 
 type CarveraFrame = {
@@ -36,6 +38,10 @@ export class Carvera implements Profile {
     private stream: TransportStream;
     private lock = new AsyncLock();
 
+    get transport() {
+        return this.stream;
+    }
+
     constructor(stream: TransportStream) {
         this.stream = stream;
     }
@@ -46,6 +52,10 @@ export class Carvera implements Profile {
 
     async readState() {
         return await this.lock.inLock(async () => {
+            if (!this.stream.transport.connected) {
+                throw new Error('Not connected');
+            }
+
             this.stream.send('?\n');
 
             // Load state
@@ -97,7 +107,8 @@ export class Carvera implements Profile {
                             tool: {
                                 index: -1,
                                 offset: 0
-                            }
+                            },
+                            halt: null
                         };
                         for (let p of parts) {
                             if (p.startsWith('MPos:')) {
@@ -126,6 +137,14 @@ export class Carvera implements Profile {
                                 while (vars.length < 2) vars.push(0);
                                 state.tool = { index: vars[0], offset: vars[1] };
                             }
+                            if (p.startsWith('H:')) {
+                                let vars = p.substring('H:'.length).split(',').map((v) => parseInt(v));
+                                while (vars.length < 1) vars.push(0);
+                                let error = CARVERA_HALT_ERRORS[vars[0]];
+                                if (error) {
+                                    state.halt = { reason: error };
+                                }
+                            }
                         }
 
                         break;
@@ -147,12 +166,45 @@ export class Carvera implements Profile {
         });
     }
 
+    async command(command: string) {
+        return await this.lock.inLock(async () => {
+            if (!this.stream.transport.connected) {
+                throw new Error('Not connected');
+            }
+            if (!isGCode(command)) {
+                return ''; // Silently ignore
+            }
+
+            // Send command
+            this.stream.send(command + '\n');
+
+            // Load response
+            let out = '';
+            while (true) {
+                let r = await this.#readFrame();
+                if (r.kind === 'text') {
+                    out += r.value;
+                    if (out.length !== 0) {
+                        out += '\n';
+                    }
+                    if (r.value.startsWith('ok')) {
+                        break;
+                    }
+                }
+            }
+            return out;
+        });
+    }
+
     //
     // Files Operations
     //
 
     async listFiles(path: string) {
         return await this.lock.inLock(async () => {
+            if (!this.stream.transport.connected) {
+                throw new Error('Not connected');
+            }
 
             // Send command
             this.stream.send('ls -e -s ' + escapeFilename(path) + '\n');
@@ -189,16 +241,22 @@ export class Carvera implements Profile {
 
     async readFile(path: string) {
         return await this.lock.inLock(async () => {
+            if (!this.stream.transport.connected) {
+                throw new Error('Not connected');
+            }
 
         });
     }
 
     //
-    // Read Operations
+    // Lifecycle
     //
 
     async readTime() {
         return await this.lock.inLock(async () => {
+            if (!this.stream.transport.connected) {
+                throw new Error('Not connected');
+            }
 
             // Send command
             this.stream.send('time\n');
@@ -222,6 +280,9 @@ export class Carvera implements Profile {
 
     async readVersion() {
         return await this.lock.inLock(async () => {
+            if (!this.stream.transport.connected) {
+                throw new Error('Not connected');
+            }
 
             // Send command
             this.stream.send('version\n');
@@ -243,9 +304,21 @@ export class Carvera implements Profile {
         });
     }
 
+    async prepare() {
+
+        // Sync time
+        let time = await this.readTime();
+
+        // Load current version
+        let version = await this.readVersion();
+    }
+
     async disconnect() {
         return await this.lock.inLock(async () => {
-            // await this.stream.close();
+            if (this.stream.transport.connected) {
+                return;
+            }
+            await this.stream.transport.disconnect();
         });
     }
 
@@ -288,4 +361,27 @@ function escapeFilename(src: string) {
 
 function unescapeFilename(src: string) {
     return src.replaceAll('\x01', ' ');
+}
+
+const CARVERA_HALT_ERRORS: { [key: number]: MachineError } = {
+    [1]: 'halt_manually',
+    [2]: 'home_fail',
+    [3]: 'probe_fail',
+    [4]: 'calibrate_fail',
+    [5]: 'atc_home_fail',
+    [6]: 'atc_invalid_tool_number',
+    [7]: 'atc_drop_tool_fail',
+    [8]: 'atc_position_occupied',
+    [9]: 'spindle_overheated',
+    [10]: 'soft_limit_triggered',
+    [11]: 'cover_opened_when_playing',
+    [12]: 'wireless_probe_dead_or_not_set',
+    [13]: 'emergency_stop_button_pressed',
+    [21]: 'hard_limit_triggered',
+    [22]: 'x_axis_motor_error',
+    [23]: 'y_axis_motor_error',
+    [24]: 'z_axis_motor_error',
+    [25]: 'spindle_stall',
+    [26]: 'sd_card_read_fail',
+    [41]: 'spindle_alarm'
 }

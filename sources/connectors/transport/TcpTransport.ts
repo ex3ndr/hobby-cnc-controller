@@ -94,4 +94,20 @@ export class TcpTransport implements Transport {
             return res;
         });
     }
+
+    async disconnect(): Promise<void> {
+        if (!this.closed) {
+            this.closed = true;
+
+            // Abort lock
+            let aw = this.bufferAwaiter;
+            this.bufferAwaiter = null;
+            if (aw) {
+                aw(false);
+            }
+
+            // Close socket
+            this.socket.destroy();
+        }
+    }
 }

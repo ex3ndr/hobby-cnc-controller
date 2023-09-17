@@ -43,6 +43,40 @@ export class Controller {
         return this.machines.find((v) => v.id === id);
     }
 
+    get state() {
+        let machines: any[] = [];;
+        for (let c of this.connectedDevices) {
+
+            let state: any = {};
+            if (c.state.status === 'connecting') {
+                state = {
+                    status: 'connecting'
+                };
+            } else if (c.state.status === 'connected') {
+                state = {
+                    status: 'connected'
+                };
+            } else if (c.state.status === 'ready') {
+                state = {
+                    status: 'ready',
+                    state: c.state.state,
+                    id: c.state.id
+                };
+            } else { // Should not happen
+                state = {
+                    status: 'disconnected'
+                };
+            }
+
+            machines.push({
+                id: c.id,
+                profile: c.profile,
+                state
+            });
+        }
+        return { machines };
+    }
+
     connect(id: string, profile: string) {
 
 
