@@ -77,5 +77,8 @@ export interface Profile {
     prepare(): Promise<void>;
     readState(): Promise<MachineState>;
     command(command: string): Promise<string>;
+    home(): Promise<void>;
+    softUnlock(): Promise<void>;
+    softLock(): Promise<void>;
     disconnect(): Promise<void>;
 };

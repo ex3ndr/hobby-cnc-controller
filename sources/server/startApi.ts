@@ -26,5 +26,13 @@ export async function startApi(controller: Controller) {
         controller.machine(req.body.machine as string)!.command(req.body.id as string, { kind: 'gcode', command: req.body.command as string });
         res.send(controller.state);
     });
+    app.post('/controller/unlock', (req, res) => {
+        controller.machine(req.body.machine as string)!.command(req.body.id as string, { kind: 'soft-unlock' });
+        res.send(controller.state);
+    });
+    app.post('/controller/lock', (req, res) => {
+        controller.machine(req.body.machine as string)!.command(req.body.id as string, { kind: 'soft-lock' });
+        res.send(controller.state);
+    });
     app.listen(3000);
 }

@@ -313,6 +313,18 @@ export class Carvera implements Profile {
         let version = await this.readVersion();
     }
 
+    async home(): Promise<void> {
+        await this.command('$H');
+    }
+
+    async softUnlock(): Promise<void> {
+        await this.command('$X');
+    }
+
+    async softLock(): Promise<void> {
+        this.stream.send(String.fromCharCode(0x18));
+    }
+
     async disconnect() {
         return await this.lock.inLock(async () => {
             if (this.stream.transport.connected) {

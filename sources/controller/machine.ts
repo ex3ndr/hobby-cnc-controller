@@ -29,9 +29,9 @@ export type MachineCommand = {
 } | {
     kind: 'pause'
 } | {
-    kind: 'emergency-stop'
+    kind: 'soft-lock'
 } | {
-    kind: 'emergency-unlock'
+    kind: 'soft-unlock'
 };
 
 export class Machine {
@@ -146,16 +146,6 @@ export class Machine {
         }
 
         //
-        // Handle emergency
-        // 
-        // NOTE: Emergency is handled as fast as possible without loading the state
-        //
-        // TODO: Reduce backoff in invalidation sync if emergency is detected
-        //
-
-        // TODO: Implement
-
-        //
         // Refetch state if needed
         //
 
@@ -192,6 +182,12 @@ export class Machine {
                     log(this.id, 'Sending command', op.command);
                     let response = await this._state.profile.command(op.command);
                     log(this.id, 'Response', response);
+                } else if (op.kind === 'soft-lock') {
+                    log(this.id, 'Soft lock');
+                    await this._state.profile.softLock();
+                } else if (op.kind === 'soft-unlock') {
+                    log(this.id, 'Soft unlock');
+                    await this._state.profile.softUnlock();
                 }
             }
         }
