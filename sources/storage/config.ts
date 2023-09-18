@@ -6,7 +6,6 @@ export type Config = {
         transport: TransportEndpoint;
         profile: string;
     },
-    version: number,
     settings: UserSettings
 };
 
@@ -19,7 +18,6 @@ export type UserSettings = {
 //
 
 const defaultConfig: Config = {
-    version: 1,
     settings: {
         autoconnect: true
     }

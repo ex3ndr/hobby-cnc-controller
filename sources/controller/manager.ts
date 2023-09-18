@@ -56,9 +56,32 @@ export class Manager {
     async state() {
         return this.lock.inLock(async () => {
             if (this.controller) {
+
+                let state = this.controller.state;
+                let controller: any = {};
+                if (state.status === 'connecting') {
+                    controller = {
+                        status: 'connecting'
+                    };
+                } else if (state.status === 'connected') {
+                    controller = {
+                        status: 'connected'
+                    };
+                } else if (state.status === 'ready') {
+                    controller = {
+                        status: 'ready',
+                        state: state.state,
+                        id: state.id
+                    };
+                } else { // Should not happen
+                    controller = {
+                        status: 'disconnected'
+                    };
+                }
                 return {
                     state: 'configured',
-                    controller: this.controller.state
+                    name: this.config.connection!.name,
+                    controller
                 }
             } else {
                 return {
@@ -85,7 +108,6 @@ export class Manager {
             // Update config
             let config = {
                 ...this.config,
-                version: this.config.version + 1,
                 connection: {
                     name: p.defaultName,
                     transport,
@@ -111,7 +133,6 @@ export class Manager {
             // Update config
             let config = {
                 ...this.config,
-                version: this.config.version + 1,
                 connection: undefined
             };
             saveConfig(this.storage, config);
