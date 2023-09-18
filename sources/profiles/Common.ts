@@ -1,4 +1,4 @@
-import { TransportStream } from "../../connectors/transport/TransportStream";
+import { TransportStream } from "../connectors/transport/TransportStream";
 import { MachineError } from "./_errors";
 
 export type FileEntry = {

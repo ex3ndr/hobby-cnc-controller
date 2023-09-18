@@ -1,8 +1,9 @@
-import { DeviceTransport, DiscoveredDevice } from "../../connectors/Discovery";
-import { TcpTransport } from "../../connectors/transport/TcpTransport";
-import { TransportStream } from "../../connectors/transport/TransportStream";
-import { isGCode } from "../../utils/isGCode";
-import { AsyncLock } from "../../utils/lock";
+import { DeviceTransport, DiscoveredDevice } from "../connectors/Discovery";
+import { TcpTransport } from "../connectors/transport/TcpTransport";
+import { TransportStream } from "../connectors/transport/TransportStream";
+import { TransportEndpoint } from "../storage/config";
+import { isGCode } from "../utils/isGCode";
+import { AsyncLock } from "../utils/lock";
 import { FileEntry, MachineState, MachineStatus, Profile } from "./Common";
 import { MachineError } from "./_errors";
 import { XMODEM_CAN, XMODEM_SOH, XMODEM_STX } from "./protocols/XMODEM";
@@ -18,11 +19,13 @@ type CarveraFrame = {
 
 export class Carvera implements Profile {
 
+    static readonly defaultName: string = 'Carvera';
+
     static isSupported(device: DiscoveredDevice) {
         return device.vendor === 'carvera' && device.transport.type === 'tcp';
     }
 
-    static async create(deviceTransport: DeviceTransport) {
+    static async create(deviceTransport: TransportEndpoint) {
 
         // Check if device is supported
         if (deviceTransport.type !== 'tcp') throw new Error('Only TCP is supported');
@@ -167,12 +170,16 @@ export class Carvera implements Profile {
     }
 
     async command(command: string) {
+        if (!isGCode(command)) {
+            return ''; // Silently ignore
+        }
+        return this.#command(command);
+    }
+
+    async #command(command: string) {
         return await this.lock.inLock(async () => {
             if (!this.stream.transport.connected) {
                 throw new Error('Not connected');
-            }
-            if (!isGCode(command)) {
-                return ''; // Silently ignore
             }
 
             // Send command
@@ -314,11 +321,11 @@ export class Carvera implements Profile {
     }
 
     async home(): Promise<void> {
-        await this.command('$H');
+        await this.#command('$H');
     }
 
     async softUnlock(): Promise<void> {
-        await this.command('$X');
+        await this.#command('$X');
     }
 
     async softLock(): Promise<void> {

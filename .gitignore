@@ -1,2 +1,4 @@
-node_modules
-playground
+/node_modules
+/playground
+.env
+/dev

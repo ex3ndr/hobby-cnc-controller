@@ -1,5 +1,5 @@
-import { TransportStream } from "../../../connectors/transport/TransportStream";
-import { log } from "../../../utils/log";
+import { TransportStream } from "../../connectors/transport/TransportStream";
+import { log } from "../../utils/log";
 
 export const XMODEM_SOH = 0x01;
 export const XMODEM_STX = 0x02;

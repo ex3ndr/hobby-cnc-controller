@@ -1,143 +1,229 @@
-import { DiscoveredDevice, Discovery } from "../connectors/Discovery";
-import { Machine } from "./machine";
-import { _all } from "./profiles/_all";
+import { InvalidateSync } from "../utils/invalidateSync";
+import { isGCode } from "../utils/isGCode";
+import { log } from "../utils/log";
+import { randomKey } from "../utils/random";
+import { MachineState, Profile, isMachineStateEquals } from "../profiles/Common";
+import { _allProfiles } from "../profiles/_all";
+import { TransportEndpoint } from "../storage/config";
+
+export type ConnectionState = {
+    status: 'connecting';
+} | {
+    id: string;
+    status: 'connected';
+    profile: Profile;
+} | {
+    id: string;
+    status: 'ready';
+    state: MachineState;
+    profile: Profile;
+} | {
+    status: 'disconnected'
+}
+
+export type MachineCommand = {
+    kind: 'gcode',
+    command: string
+} | {
+    kind: 'resume'
+} | {
+    kind: 'pause'
+} | {
+    kind: 'soft-lock'
+} | {
+    kind: 'soft-unlock'
+} | {
+    kind: 'reset'
+};
 
 export class Controller {
-    private discovery: Discovery;
-    private machines: Machine[] = [];
+    readonly id: string;
+    readonly profile: string;
+    readonly endpoint: TransportEndpoint;
 
-    constructor(discovery: Discovery) {
-        this.discovery = discovery;
-    }
-
-    get availableDevices() {
-        let d: { device: DiscoveredDevice, profiles: string[] }[] = [];
-        for (let device of this.discovery.devices) {
-
-            // Skip already connected
-            if (this.machines.findIndex((v) => v.id === device.id) !== -1) {
-                continue;
-            }
-
-            // Collect supported profiles
-            let profiles: string[] = [];
-            for (let profile in _all) {
-                if (_all[profile].isSupported(device)) {
-                    profiles.push(profile);
-                }
-            }
-
-            // If have compatible profiles, add to list
-            if (profiles.length > 0) {
-                d.push({ device, profiles });
-            }
-        }
-        return d;
-    }
-
-    get connectedDevices() {
-        return this.machines;
-    }
-
-    machine(id: string) {
-        return this.machines.find((v) => v.id === id);
-    }
+    private _destroyed = false;
+    private _sync: InvalidateSync;
+    private _state: ConnectionState = { status: 'connecting' };
+    private _timer: any;
+    private _queue: { id: string, command: MachineCommand }[] = [];
 
     get state() {
-        let machines: any[] = [];;
-        for (let c of this.connectedDevices) {
+        return this._state;
+    }
 
-            let state: any = {};
-            if (c.state.status === 'connecting') {
-                state = {
-                    status: 'connecting'
-                };
-            } else if (c.state.status === 'connected') {
-                state = {
-                    status: 'connected'
-                };
-            } else if (c.state.status === 'ready') {
-                state = {
-                    status: 'ready',
-                    state: c.state.state,
-                    id: c.state.id
-                };
-            } else { // Should not happen
-                state = {
-                    status: 'disconnected'
-                };
+    constructor(id: string, profile: string, endpoint: TransportEndpoint) {
+        this.id = id;
+        this.profile = profile;
+        this.endpoint = endpoint;
+        this._sync = new InvalidateSync(this._doSync.bind(this));
+        this._sync.invalidate();
+        this._timer = setInterval(() => this._sync.invalidate(), 1000);
+    }
+
+    command(id: string, command: MachineCommand) {
+        if (this._state.status === 'ready' && this._state.id === id) {
+            if (command.kind === 'gcode' && !isGCode(command.command)) {
+                log('controller', 'Invalid gcode', command.command);
+                return; // Ignore invalid gcode
             }
-
-            machines.push({
-                id: c.id,
-                profile: c.profile,
-                state
-            });
+            this._queue.push({ id, command }); // Ignore commands for other machines or if not ready
+            this._sync.invalidate();
         }
-        return { machines };
     }
 
-    connect(id: string, profile: string) {
-
-
-        //
-        // Check if device is already connected
-        //
-
-        if (this.machines.find((v) => v.id === id)) {
-            throw new Error('Device is already connected');
+    destroy() {
+        if (!this._destroyed) {
+            this._destroyed = true;
+            this._timer = clearInterval(this._timer);
+            this._sync.invalidate();
         }
-
-        //
-        // Search for a device
-        //
-
-        let device = this.discovery.devices.find((v) => v.id === id);
-        if (!device) throw new Error('Device not found');
-        if (device.state !== 'active') throw new Error('Device is not active');
-
-        //
-        // Check if profile exist and supported for the connection
-        //
-
-        let inst = _all[profile];
-        if (!inst) {
-            throw new Error('Profile not found');
-        }
-        if (!inst.isSupported(device)) {
-            throw new Error('Device is not supported');
-        }
-
-        //
-        // Register a machine
-        //
-
-        let machine = new Machine(id, device.transport, profile);
-        this.machines.push(machine);
     }
 
-    disconnect(id: string) {
+    //
+    // Sync Logic
+    //
+    // NOTE: We assume that underlying transport is effectively single threaded
+    //       and therefore we can implement sync logic in a simple way inside 
+    //       of the invalidate sync.
+    // 
+    // NOTE: We assume that sync state could be changed only within the sync
+    //
 
+    private async _doSync() {
 
         //
-        // Check if device is connected
+        // Destroy if needed
         //
 
-        if (!this.machines.find((v) => v.id === id)) {
-            throw new Error('Device is not connected');
+        if (this._destroyed && this._state.status !== 'disconnected') {
+            if (this._state.status === 'connected' || this._state.status === 'ready') {
+                await this._state.profile.disconnect();
+            }
+            this._state = { status: 'disconnected' };
+            return; // Early return just in case
         }
 
         //
-        // Disconnect machine
+        // Detect disconnect
         //
 
-        let machine = this.machines.find((v) => v.id === id)!;
-        machine.destroy();
+        if (this._state.status === 'connected' || this._state.status === 'ready') {
+            if (!this._state.profile.transport.transport.connected) {
+                log('controller', 'Disconnected');
+                this._state = { status: 'connecting' };
+                return;
+            }
+        }
 
         //
-        // Delete machine
+        // Create a connection if needed
         //
 
-        this.machines = this.machines.filter((v) => v.id !== id);
+        if (this._state.status === 'connecting') {
+            log('controller', 'Connecting to ' + this.endpoint);
+            let profile = await _allProfiles[this.profile].create(this.endpoint);
+            this._state = { id: randomKey(), status: 'connected', profile };
+            log(this.id, 'Connected');
+        }
+
+        //
+        // Read initial state
+        // 
+
+        let wasInited = false;
+        if (this._state.status === 'connected') {
+
+            // Configure
+            log('controller', 'Configuring machine');
+            await this._state.profile.prepare();
+
+            // Load state
+            log('controller', 'Loading init state');
+            let state = await this._state.profile.readState();
+
+            // Update local state
+            this._state = { id: this._state.id, status: 'ready', state, profile: this._state.profile };
+            wasInited = true;
+            log('controller', 'Init state loaded', this._state.state);
+        }
+
+        //
+        // Refetch state if needed
+        //
+
+        if (this._state.status === 'ready' && !wasInited) {
+            // log(this.id, 'Loading updated state');
+            let state = await this._state.profile.readState();
+            let oldState = this._state.state;
+            this._state = { id: this._state.id, status: 'ready', state, profile: this._state.profile };
+            if (!isMachineStateEquals(oldState, this._state.state)) {
+                log('controller', 'State changed', this._state.state);
+            }
+        }
+
+        //
+        // Execute command
+        //
+
+        if (this._state.status === 'ready') {
+
+            // Process commands
+            let sentCommands = 0;
+            while (this._queue.length > 0 && sentCommands < 5) {
+
+                // Load command
+                let command = this._queue[0];
+                let op = command.command;
+                this._queue = this._queue.slice(1);
+                if (command.id !== this._state.id) {
+                    continue;
+                }
+
+                // Process command
+                if (op.kind === 'gcode') {
+                    log('controller', 'Sending command', op.command);
+                    let response = await this._state.profile.command(op.command);
+                    log('controller', 'Response', response);
+                } else if (op.kind === 'soft-lock') {
+                    log('controller', 'Soft lock');
+                    await this._state.profile.softLock();
+                } else if (op.kind === 'soft-unlock') {
+                    log('controller', 'Soft unlock');
+                    await this._state.profile.softUnlock();
+                }
+            }
+        }
+
+        //
+        // Re-invalidate if needed
+        //
+
+        if (this.invalidationNeeded()) {
+            this._sync.invalidate();
+        }
+    }
+
+    private invalidationNeeded(): boolean {
+
+        // Destroyed case
+        if (this._destroyed) {
+            return this._state.status !== 'disconnected';
+        }
+
+        // Connecting case
+        if (this._state.status === 'connecting') {
+            return true;
+        }
+        if (this._state.status === 'connected') {
+            return true;
+        }
+
+        // Has queue
+        if (this._state.status === 'ready' && this._queue.length > 0) {
+            return true;
+        }
+
+        // Other cases
+        return false;
     }
 }
