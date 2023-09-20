@@ -10,7 +10,7 @@ export type FileEntry = {
     size: number
 }
 
-export type MachineStatus = 'alarm' | 'home' | 'hold' | 'idle' | 'run';
+export type MachineStatus = 'alarm' | 'home' | 'hold' | 'idle' | 'run' | 'pause';
 
 export type Vector5 = {
     x: number,
@@ -21,6 +21,9 @@ export type Vector5 = {
 }
 
 export type MachineState = {
+    firmware: {
+        version: string
+    },
     status: MachineStatus;
     machinePosition: Vector5;
     workPosition: Vector5;
@@ -69,16 +72,26 @@ export function isMachineStateEquals(a: MachineState, b: MachineState): boolean 
         && a.vacuum.enabled === b.vacuum.enabled
         && a.tool.index === b.tool.index
         && a.tool.offset === b.tool.offset
-        && a.halt?.reason === b.halt?.reason;
+        && a.halt?.reason === b.halt?.reason
+        && b.firmware.version === b.firmware.version;
 }
 
 export interface Profile {
-    get transport(): TransportStream;
+    get stream(): TransportStream;
+    get connected(): boolean;
+
+    // Prepare machine for communication
     prepare(): Promise<void>;
-    readState(): Promise<MachineState>;
+
+    // Load current state
+    state(): Promise<MachineState>;
+
+    // Execute commands
     command(command: string): Promise<string>;
     home(): Promise<void>;
     softUnlock(): Promise<void>;
     softLock(): Promise<void>;
-    disconnect(): Promise<void>;
+
+    // Disconnect from machine
+    close(): void;
 };

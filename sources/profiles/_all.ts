@@ -1,6 +1,6 @@
 import { DiscoveredDevice } from "../connectors/Discovery";
 import { TransportEndpoint } from "../storage/config";
-import { Carvera } from "./Carvera";
+import { Carvera } from "./carvera/Carvera";
 import { Profile } from "./Common";
 
 export const _allProfiles: {

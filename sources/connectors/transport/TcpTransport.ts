@@ -16,6 +16,7 @@ export class TcpTransport implements Transport {
     private buffer: Buffer = Buffer.alloc(0);
     private bufferAwaiter: ((ok: boolean) => void) | null = null;
     private readLock = new AsyncLock();
+    onClosed: (() => void) | null = null;
 
     get connected() {
         return this.opened && !this.closed;
@@ -59,6 +60,9 @@ export class TcpTransport implements Transport {
         this.socket.on('close', () => {
             if (!this.closed) {
                 this.closed = true;
+                if (this.onClosed) {
+                    this.onClosed();
+                }
                 let aw = this.bufferAwaiter;
                 if (aw) {
                     this.bufferAwaiter = null;
@@ -95,7 +99,7 @@ export class TcpTransport implements Transport {
         });
     }
 
-    async disconnect(): Promise<void> {
+    close() {
         if (!this.closed) {
             this.closed = true;
 

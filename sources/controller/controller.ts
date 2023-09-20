@@ -5,6 +5,7 @@ import { randomKey } from "../utils/random";
 import { MachineState, Profile, isMachineStateEquals } from "../profiles/Common";
 import { _allProfiles } from "../profiles/_all";
 import { TransportEndpoint } from "../storage/config";
+import { RepeatSync } from "../utils/RepeatSync";
 
 export type ConnectionState = {
     status: 'connecting';
@@ -15,8 +16,8 @@ export type ConnectionState = {
 } | {
     id: string;
     status: 'ready';
-    state: MachineState;
     profile: Profile;
+    state: MachineState
 } | {
     status: 'disconnected'
 }
@@ -43,8 +44,8 @@ export class Controller {
 
     private _destroyed = false;
     private _sync: InvalidateSync;
+    private _syncStatus: RepeatSync;
     private _state: ConnectionState = { status: 'connecting' };
-    private _timer: any;
     private _queue: { id: string, command: MachineCommand }[] = [];
 
     get state() {
@@ -57,7 +58,7 @@ export class Controller {
         this.endpoint = endpoint;
         this._sync = new InvalidateSync(this._doSync.bind(this));
         this._sync.invalidate();
-        this._timer = setInterval(() => this._sync.invalidate(), 1000);
+        this._syncStatus = new RepeatSync(500, this.#doSyncStatus.bind(this));
     }
 
     command(id: string, command: MachineCommand) {
@@ -74,7 +75,7 @@ export class Controller {
     destroy() {
         if (!this._destroyed) {
             this._destroyed = true;
-            this._timer = clearInterval(this._timer);
+            this._syncStatus.stop();
             this._sync.invalidate();
         }
     }
@@ -97,9 +98,10 @@ export class Controller {
 
         if (this._destroyed && this._state.status !== 'disconnected') {
             if (this._state.status === 'connected' || this._state.status === 'ready') {
-                await this._state.profile.disconnect();
+                this._state.profile.close();
             }
             this._state = { status: 'disconnected' };
+            log('controller', 'Destroyed');
             return; // Early return just in case
         }
 
@@ -108,10 +110,10 @@ export class Controller {
         //
 
         if (this._state.status === 'connected' || this._state.status === 'ready') {
-            if (!this._state.profile.transport.transport.connected) {
-                log('controller', 'Disconnected');
+            if (!this._state.profile.connected) {
+                this._state.profile.close();
                 this._state = { status: 'connecting' };
-                return;
+                log('controller', 'Disconnected');
             }
         }
 
@@ -123,14 +125,13 @@ export class Controller {
             log('controller', 'Connecting to ' + this.endpoint);
             let profile = await _allProfiles[this.profile].create(this.endpoint);
             this._state = { id: randomKey(), status: 'connected', profile };
-            log(this.id, 'Connected');
+            log('controller', 'Connected');
         }
 
         //
         // Read initial state
         // 
 
-        let wasInited = false;
         if (this._state.status === 'connected') {
 
             // Configure
@@ -138,28 +139,17 @@ export class Controller {
             await this._state.profile.prepare();
 
             // Load state
-            log('controller', 'Loading init state');
-            let state = await this._state.profile.readState();
+            log('controller', 'Loading machine state');
+            let state = await this._state.profile.state();
 
             // Update local state
-            this._state = { id: this._state.id, status: 'ready', state, profile: this._state.profile };
-            wasInited = true;
-            log('controller', 'Init state loaded', this._state.state);
+            this._state = { id: this._state.id, status: 'ready', profile: this._state.profile, state };
+            log('controller', 'Machine ready', state);
+
+            // Invalidate status sync
+            this._syncStatus.invalidate();
         }
 
-        //
-        // Refetch state if needed
-        //
-
-        if (this._state.status === 'ready' && !wasInited) {
-            // log(this.id, 'Loading updated state');
-            let state = await this._state.profile.readState();
-            let oldState = this._state.state;
-            this._state = { id: this._state.id, status: 'ready', state, profile: this._state.profile };
-            if (!isMachineStateEquals(oldState, this._state.state)) {
-                log('controller', 'State changed', this._state.state);
-            }
-        }
 
         //
         // Execute command
@@ -200,6 +190,20 @@ export class Controller {
 
         if (this.invalidationNeeded()) {
             this._sync.invalidate();
+        }
+    }
+
+    async #doSyncStatus() {
+        if (this._state.status === 'ready') {
+            let s = this._state.state;
+            let id = this._state.id;
+            let state = await this._state.profile.state();
+            if (this._state.status === 'ready' && this._state.id === id /* Protection from concurrency problems */) {
+                if (!isMachineStateEquals(s, state)) {
+                    this._state = { ...this._state, state };
+                    log('controller', 'State changed to ', state);
+                }
+            }
         }
     }
 

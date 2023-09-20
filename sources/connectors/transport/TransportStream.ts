@@ -5,9 +5,19 @@ export class TransportStream {
     readonly transport: Transport;
     private lock = new AsyncLock();
     private buffer: Buffer = Buffer.alloc(0);
+    onClosed: (() => void) | null = null;
 
     constructor(transport: Transport) {
         this.transport = transport;
+        this.transport.onClosed = () => {
+            if (this.onClosed) {
+                this.onClosed();
+            }
+        }
+    }
+
+    get connected() {
+        return this.transport.connected;
     }
 
     send(data: Buffer | string) {
@@ -62,5 +72,9 @@ export class TransportStream {
             this.buffer = this.buffer.subarray(index + 1);
             return result;
         });
+    }
+
+    close() {
+        this.transport.close();
     }
 }
