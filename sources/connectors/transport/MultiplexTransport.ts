@@ -1,3 +1,4 @@
+import { log } from "../../utils/log";
 import { Queue } from "../../utils/queue";
 import { TransportStream } from "./TransportStream";
 
@@ -33,6 +34,8 @@ export class MultiplexTransport<T> {
                         throw e;
                     }
                 }
+
+                log('multiplex', 'Received frame', frame);
 
                 // Push frame to all queues
                 let a = [...this._queues];

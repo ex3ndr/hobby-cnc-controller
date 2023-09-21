@@ -57,17 +57,30 @@ export class TransportStream {
         });
     }
 
-    async readUntil(byte: number) {
+    async readUntil(anyOf: number[]) {
         return await this.lock.inLock(async () => {
 
             // Populate cache
-            while (this.buffer.indexOf(byte) < 0) {
+            outer: while (true) {
+                for (let i of anyOf) {
+                    if (this.buffer.indexOf(i) >= 0) {
+                        break outer;
+                    }
+                }
                 let b = await this.transport.read();
                 this.buffer = Buffer.concat([this.buffer, b]);
             }
 
+            // Find minimal index
+            let index = -1;
+            for (let i of anyOf) {
+                let j = this.buffer.indexOf(i);
+                if (j >= 0 && (index < 0 || j < index)) {
+                    index = j;
+                }
+            }
+
             // Read buffer
-            let index = this.buffer.indexOf(byte);
             let result = this.buffer.subarray(0, index);
             this.buffer = this.buffer.subarray(index + 1);
             return result;

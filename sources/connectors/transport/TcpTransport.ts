@@ -47,6 +47,7 @@ export class TcpTransport implements Transport {
         // Receive data
         this.socket.on('data', (data) => {
             if (!this.closed) {
+                console.warn('Received', data);
                 this.buffer = Buffer.concat([this.buffer, data]);
                 let aw = this.bufferAwaiter;
                 if (aw) {

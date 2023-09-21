@@ -5,9 +5,12 @@ import { TransportStream } from "../../connectors/transport/TransportStream";
 import { TransportEndpoint } from "../../storage/config";
 import { isGCode } from "../../utils/isGCode";
 import { AsyncLock } from "../../utils/lock";
-import { MachineState, Profile } from "../Common";
-import { XMODEM_CAN, XMODEM_SOH, XMODEM_STX } from "./XMODEM";
+import { log } from "../../utils/log";
+import { FileEntry, MachineState, Profile } from "../Common";
+import { XMODEM_ACK, XMODEM_CAN, XMODEM_FRAME_ACK, XMODEM_FRAME_CANCEL, XMODEM_FRAME_EOT, XMODEM_FRAME_NACK, XMODEM_NACK, XMODEM_SOH, XMODEM_STX, XmodemFrame, createXModemDataFrame, readXModemFrame } from "./XMODEM";
 import { parseState } from "./parser";
+import { escapeFilename, unescapeFilename } from "./utils";
+import crypto from 'crypto';
 
 export class Carvera implements Profile {
 
@@ -34,6 +37,7 @@ export class Carvera implements Profile {
     private _transport: MultiplexTransport<CarveraFrame>;
     private _lockCommand = new AsyncLock();
     private _lockState = new AsyncLock();
+    private _lockFiles = new AsyncLock();
     private _firmwareVersion: string = 'unknown';
 
     constructor(stream: TransportStream) {
@@ -176,7 +180,6 @@ export class Carvera implements Profile {
                 while (true) {
                     let r = await reader.read();
                     if (r.kind === 'status') {
-                        console.warn(r.value);
                         let state = parseState(r.value);
                         let converted: MachineState = {
                             firmware: {
@@ -193,57 +196,327 @@ export class Carvera implements Profile {
         });
     }
 
+    async currentFile() {
+        return this._lockState.inLock(async () => {
+            let reader = this._transport.createReader();
+            try {
+                this._transport.send('progress\n');
+                while (true) {
+                    let r = await reader.read();
+                    if (r.kind === 'text' && r.value === 'Not currently playing') {
+                        return null;
+                    } else if (r.kind === 'text' && r.value.startsWith('file: ')) {
+                        let parts = r.value.split(',');
+                        if (parts.length === 4) {
+                            return parts[0].slice('file: '.length).trim();
+                        }
+                    }
+                }
+            } finally {
+                reader.close();
+            }
+        });
+    }
+
     //
     // File System
     //
 
-    // async listFiles(path: string) {
-    //     return await this.lock.inLock(async () => {
-    //         if (!this.stream.transport.connected) {
-    //             throw new Error('Not connected');
-    //         }
+    async listFiles(path: string) {
+        return await this._lockFiles.inLock(() => this._lockCommand.inLock(async () => {
 
-    //         // Send command
-    //         this.stream.send('ls -e -s ' + escapeFilename(path) + '\n');
+            // Send command
+            let reader = this._transport.createReader();
+            try {
+                this.stream.send('ls -e -s ' + escapeFilename(path) + '\n');
+                let files: FileEntry[] = [];
+                while (true) {
+                    let r = await reader.read();
+                    if (r.kind === 'text') {
+                        let parts = r.value.split(' ');
+                        if (parts.length !== 3) {
+                            continue;
+                        }
+                        if (parts[0].endsWith('/')) {
+                            files.push({
+                                kind: 'directory',
+                                name: unescapeFilename(parts[0].slice(0, -1))
+                            });
+                        } else {
+                            files.push({
+                                kind: 'file',
+                                name: unescapeFilename(parts[0]),
+                                size: parseInt(parts[1], 10)
+                            });
+                        }
+                    }
+                    if (r.kind === 'end-of-transmission') {
+                        break;
+                    }
+                }
+                return files;
+            } finally {
+                reader.close();
+            }
+        }));
+    }
 
-    //         // Read response
-    //         let files: FileEntry[] = [];
-    //         while (true) {
-    //             let r = await this.#readFrame();
-    //             if (r.kind === 'text') {
-    //                 let parts = r.value.split(' ');
-    //                 if (parts.length !== 3) {
-    //                     continue;
-    //                 }
-    //                 if (parts[0].endsWith('/')) {
-    //                     files.push({
-    //                         kind: 'directory',
-    //                         name: unescapeFilename(parts[0].slice(0, -1))
-    //                     });
-    //                 } else {
-    //                     files.push({
-    //                         kind: 'file',
-    //                         name: unescapeFilename(parts[0]),
-    //                         size: parseInt(parts[1], 10)
-    //                     });
-    //                 }
-    //             }
-    //             if (r.kind === 'end-of-transmission') {
-    //                 break;
-    //             }
-    //         }
-    //         return files;
-    //     });
-    // }
+    async rm(path: string) {
+        return await this._lockFiles.inLock(() => this._lockCommand.inLock(async () => {
+            let reader = this._transport.createReader();
+            try {
+                this.stream.send('rm ' + escapeFilename(path) + ' -e\n');
+                while (true) {
+                    let r = await reader.read();
+                    if (r.kind === 'end-of-transmission') {
+                        return true;
+                    }
+                    if (r.kind === 'xmodem' && r.frame.kind === 'cancel') {
+                        return false;
+                    }
+                }
+            } finally {
+                reader.close();
+            }
+        }));
+    }
 
-    // async readFile(path: string) {
-    //     return await this.lock.inLock(async () => {
-    //         if (!this.stream.transport.connected) {
-    //             throw new Error('Not connected');
-    //         }
+    async mkdir(path: string) {
+        return await this._lockFiles.inLock(() => this._lockCommand.inLock(async () => {
+            let reader = this._transport.createReader();
+            try {
+                this.stream.send('mkdir ' + escapeFilename(path) + ' -e\n');
+                while (true) {
+                    let r = await reader.read();
+                    if (r.kind === 'end-of-transmission') {
+                        return true;
+                    }
+                    if (r.kind === 'xmodem' && r.frame.kind === 'cancel') {
+                        return false;
+                    }
+                }
+            } finally {
+                reader.close();
+            }
+        }));
+    }
 
-    //     });
-    // }
+    async downloadFile(path: string) {
+        return await this._lockFiles.inLock(async () => {
+            let reader = this._transport.createReader();
+            try {
+                log('carvera', 'Downloading file \"' + path + '\"');
+                this.stream.send('download ' + escapeFilename(path) + '\n');
+
+                // Start transmission
+                this.stream.send(XMODEM_FRAME_NACK);
+                let data = Buffer.alloc(0);
+                let block = 0;
+                while (true) {
+                    let r = await reader.read();
+                    if (r.kind === 'end-of-transmission') {
+
+                        // Send ACK
+                        this.stream.send(XMODEM_FRAME_ACK);
+
+                        // Return result
+                        break;
+                    }
+
+                    if (r.kind === 'xmodem') {
+                        if (r.frame.kind === 'cancel') {
+                            log('carvera', 'Received file transmission cancelation');
+
+                            // Send ACK
+                            this.stream.send(XMODEM_FRAME_ACK);
+
+                            // Throw error
+                            throw new Error('Transmission cancelled');
+                        } else if (r.frame.kind === 'data') {
+
+                            // Check block
+                            if (r.frame.block !== block) {
+
+                                log('carvera', 'Received block number mismatch. Expected ' + block + ', received: ' + r.frame.block);
+
+                                // Send cancel
+                                this.stream.send(XMODEM_FRAME_CANCEL);
+
+                                // Throw error
+                                throw new Error('Unexpected block number');
+                            }
+
+                            // MD5 Frame
+                            if (block === 0) {
+                                log('carvera', 'Received file hash \"' + r.frame.data.toString('hex') + '\"');
+                            } else {
+                                data = Buffer.concat([data, r.frame.data]);
+                            }
+
+                            // Increment block
+                            block = (block + 1) % 256;
+
+                            // Send ACK
+                            this.stream.send(XMODEM_FRAME_ACK);
+                        } else {
+                            log('carvera', 'Received invalid frame during download');
+
+                            // Send cancel
+                            this.stream.send(XMODEM_FRAME_CANCEL);
+
+                            // Throw error
+                            throw new Error('Received invalid frame');
+                        }
+                    }
+                }
+
+                // Return result
+                log('carvera', 'Downloaded ' + data.length + ' bytes');
+                return data;
+            } finally {
+                reader.close();
+            }
+        });
+    }
+
+    async uploadFile(path: string, data: Buffer) {
+        return await this._lockFiles.inLock(async () => {
+            let reader = this._transport.createReader();
+            try {
+                log('carvera', 'Upload file \"' + path + '\"');
+                this.stream.send('upload ' + escapeFilename(path) + '\n');
+
+                //
+                // Await NACK
+                //
+
+                let start = Date.now();
+                while (true) {
+                    let r = await reader.read();
+                    if (r.kind === 'text') {
+                        if (r.value === 'CCCCCCCCCC') { // Carvera sends 10 'C' characters before starting transmission
+                            break;
+                        }
+                    }
+                    if (r.kind === 'xmodem') {
+                        if (r.frame.kind === 'nack') {
+                            if (!r.frame.crc) {
+                                log('carvera', 'Received legacy CRC request');
+
+                                // Send cancel
+                                this.stream.send(XMODEM_FRAME_CANCEL);
+
+                                throw new Error('Legacy CRC not supported');
+                            } else {
+                                break;
+                            }
+                        } else if (r.frame.kind === 'cancel') {
+                            log('carvera', 'Received upload cancel');
+                            throw new Error('Upload cancelled');
+                        }
+                    } else if (r.kind === 'end-of-transmission') {
+                        log('carvera', 'Received end of transmission');
+                        throw new Error('Upload cancelled');
+                    }
+                }
+                log('carvera', 'Upload inited in ' + (Date.now() - start) + 'ms');
+
+                //
+                // Send first block - md5 of a file
+                //
+
+                let block = 0;
+                let md5 = crypto.createHash('md5').update(data).digest();
+                this.stream.send(createXModemDataFrame(block, md5));
+                block = (block + 1) % 256;
+                let remaining = data;
+
+                //
+                // Send data
+                //
+
+                while (remaining.length > 0) {
+
+                    //
+                    // Await confirmation
+                    //
+
+                    let r = await reader.read();
+                    if (r.kind === 'xmodem') {
+                        if (r.frame.kind === 'cancel') {
+                            log('carvera', 'Received upload cancel');
+                            throw new Error('Upload cancelled');
+                        } else if (r.frame.kind === 'nack') {
+                            // Just ignore NACK
+                            // log('carvera', 'Received NACK when should not');
+                            // throw new Error('Upload failed');
+                        } else if (r.frame.kind !== 'ack') {
+                            log('carvera', 'Received invalid frame');
+                            throw new Error('Upload failed');
+                        }
+                    } else if (r.kind === 'end-of-transmission') {
+                        log('carvera', 'Received upload cancel');
+                        throw new Error('Upload cancelled');
+                    }
+
+                    //
+                    // Send next block
+                    //
+
+                    let d = remaining.subarray(0, Math.min(8192, remaining.length));
+                    this.stream.send(createXModemDataFrame(block, d));
+                    block = (block + 1) % 256;
+                    remaining = remaining.subarray(d.length);
+                }
+
+                //
+                // Send end of transmission
+                //
+
+                this.stream.send(XMODEM_FRAME_EOT);
+
+                //
+                // Await confirmation
+                //
+
+                while (true) {
+                    let r = await reader.read();
+                    if (r.kind === 'end-of-transmission') {
+                        break;
+                    } else if (r.kind === 'xmodem') {
+                        if (r.frame.kind === 'ack') {
+                            break;
+                        } else if (r.frame.kind === 'cancel') {
+                            log('carvera', 'Received upload cancel');
+                            throw new Error('Upload cancelled');
+                        }
+                    }
+                }
+
+                //
+                // Await final message - required for proper upload
+                //
+
+                while (true) {
+                    let r = await reader.read();
+                    if (r.kind === 'text') {
+                        if (r.value.startsWith('Info: upload success')) {
+                            break;
+                        }
+                    }
+                }
+
+                //
+                // Completed
+                //
+
+                log('carvera', 'Upload finished in ' + (Date.now() - start) + 'ms');
+
+            } finally {
+                reader.close();
+            }
+        });
+    }
 
     //
     // Disconnect from machine
@@ -262,7 +535,8 @@ export class Carvera implements Profile {
 //
 
 type CarveraFrame = {
-    kind: 'xmodem'
+    kind: 'xmodem',
+    frame: XmodemFrame
 } | {
     kind: 'end-of-transmission'
 } | {
@@ -285,12 +559,15 @@ async function doReadFrame(stream: TransportStream): Promise<CarveraFrame> {
     }
 
     // XMODEM frame
-    if (header === XMODEM_SOH || header === XMODEM_STX || header === XMODEM_CAN) {
-        throw new Error('Not implemented: ' + header);
+    if (header === XMODEM_SOH || header === XMODEM_STX || header === XMODEM_CAN || header === XMODEM_NACK || header === XMODEM_ACK) {
+        return { kind: 'xmodem', frame: await readXModemFrame(stream) };
     }
 
     // Load text frame
-    let data = await stream.readUntil(0x0A);
+    // NOTE: We are using two separators - new line and xmodem' NACK. This is because there are no way to distinguish 
+    //       some xmodem frames from text frames. We only hitting this problem with CRC request frame and machine
+    //       usually sends NACK after text, so we can use it as a separator.
+    let data = await stream.readUntil([0x0A, XMODEM_NACK]); // New Line or NACK
     let str = data.toString('utf8');
     if (str.endsWith('\r')) {
         str = str.slice(0, -1);
