@@ -76,6 +76,7 @@ export class TcpTransport implements Transport {
     send(data: Buffer) {
         if (!this.closed && this.opened) { // Ignoring data if not connected to simplify disconnects
             this.socket.write(data);
+            console.warn('Sent', data);
         }
     }
 

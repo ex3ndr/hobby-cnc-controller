@@ -96,7 +96,7 @@ export async function readXModemFrame(src: TransportStream): Promise<XmodemFrame
 export function createXModemDataFrame(block: number, data: Buffer): Buffer {
     let paddedData = Buffer.alloc(8192);
     data.copy(paddedData);
-    let result = Buffer.concat([Buffer.from([block, 255 - block, data.length >> 8, data.length && 255]), paddedData]);
+    let result = Buffer.concat([Buffer.from([block, 255 - block, (data.length >> 8) & 255, data.length & 255]), paddedData]);
     let crc = xmodemChecksum16bit(result.subarray(2));
     result = Buffer.concat([Buffer.from([XMODEM_STX]), result, Buffer.from([crc >> 8, crc & 0xFF])]);
     return result;

@@ -6,6 +6,11 @@ export type CarveraState = {
     status: MachineStatus;
     machinePosition: Vector5;
     workPosition: Vector5;
+    progress: {
+        lines: number,
+        percent: number,
+        seconds: number
+    } | null,
     feed: { current: number, target: number, scale: number },
     spindle: { current: number, target: number, scale: number, temperature: number },
     vacuum: { enabled: boolean },
@@ -54,6 +59,7 @@ export function parseState(src: string) {
         vacuum: {
             enabled: false
         },
+        progress: null,
         tool: {
             index: -1,
             offset: 0
@@ -94,6 +100,15 @@ export function parseState(src: string) {
             if (error) {
                 state.halt = { reason: error };
             }
+        }
+        if (p.startsWith('P:')) {
+            let vars = p.substring('P:'.length).split(',').map((v) => parseInt(v));
+            while (vars.length < 3) vars.push(0);
+            state.progress = {
+                lines: vars[0],
+                percent: vars[1],
+                seconds: vars[2]
+            };
         }
     }
 

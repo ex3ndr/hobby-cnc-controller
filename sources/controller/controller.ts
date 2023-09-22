@@ -17,7 +17,7 @@ export type ConnectionState = {
     id: string;
     status: 'ready';
     profile: Profile;
-    state: MachineState
+    state: MachineState;
 } | {
     status: 'disconnected'
 }

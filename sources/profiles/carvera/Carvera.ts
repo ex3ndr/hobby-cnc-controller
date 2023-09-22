@@ -3,9 +3,11 @@ import { MultiplexTransport } from "../../connectors/transport/MultiplexTranspor
 import { TcpTransport } from "../../connectors/transport/TcpTransport";
 import { TransportStream } from "../../connectors/transport/TransportStream";
 import { TransportEndpoint } from "../../storage/config";
+import { Storage } from "../../storage/storage";
 import { isGCode } from "../../utils/isGCode";
 import { AsyncLock } from "../../utils/lock";
 import { log } from "../../utils/log";
+import { delay } from "../../utils/time";
 import { FileEntry, MachineState, Profile } from "../Common";
 import { XMODEM_ACK, XMODEM_CAN, XMODEM_FRAME_ACK, XMODEM_FRAME_CANCEL, XMODEM_FRAME_EOT, XMODEM_FRAME_NACK, XMODEM_NACK, XMODEM_SOH, XMODEM_STX, XmodemFrame, createXModemDataFrame, readXModemFrame } from "./XMODEM";
 import { parseState } from "./parser";
@@ -20,7 +22,7 @@ export class Carvera implements Profile {
         return device.vendor === 'carvera' && device.transport.type === 'tcp';
     }
 
-    static async create(deviceTransport: TransportEndpoint) {
+    static async create(deviceTransport: TransportEndpoint, storage: Storage) {
 
         // Check if device is supported
         if (deviceTransport.type !== 'tcp') throw new Error('Only TCP is supported');
@@ -30,9 +32,10 @@ export class Carvera implements Profile {
         let stream = new TransportStream(transport);
 
         // Create instance
-        return new Carvera(stream);
+        return new Carvera(stream, storage);
     }
 
+    private _storage: Storage;
     private _stream: TransportStream;
     private _transport: MultiplexTransport<CarveraFrame>;
     private _lockCommand = new AsyncLock();
@@ -40,8 +43,9 @@ export class Carvera implements Profile {
     private _lockFiles = new AsyncLock();
     private _firmwareVersion: string = 'unknown';
 
-    constructor(stream: TransportStream) {
+    constructor(stream: TransportStream, storage: Storage) {
         this._stream = stream;
+        this._storage = storage;
         this._transport = new MultiplexTransport<CarveraFrame>(stream, doReadFrame);
     }
 
@@ -341,6 +345,8 @@ export class Carvera implements Profile {
 
                                 // Send cancel
                                 this.stream.send(XMODEM_FRAME_CANCEL);
+                                this.stream.send(XMODEM_FRAME_CANCEL);
+                                this.stream.send(XMODEM_FRAME_CANCEL);
 
                                 // Throw error
                                 throw new Error('Unexpected block number');
@@ -348,7 +354,20 @@ export class Carvera implements Profile {
 
                             // MD5 Frame
                             if (block === 0) {
-                                log('carvera', 'Received file hash \"' + r.frame.data.toString('hex') + '\"');
+                                if (r.frame.data.length !== 0) { // Sometimes carvera sends empty md5 frame
+                                    let md5 = Buffer.from(r.frame.data.toString(), 'hex');
+                                    log('carvera', 'Received file hash \"' + md5.toString('hex') + '\"');
+                                    let data = this.#tryLoadFromFileFromCache(md5);
+                                    if (data) {
+                                        log('carvera', 'File loaded from cache');
+                                        this.stream.send(XMODEM_FRAME_CANCEL);
+                                        this.stream.send(XMODEM_FRAME_CANCEL);
+                                        this.stream.send(XMODEM_FRAME_CANCEL);
+                                        return data;
+                                    }
+                                } else {
+                                    log('carvera', 'Received empty hash');
+                                }
                             } else {
                                 data = Buffer.concat([data, r.frame.data]);
                             }
@@ -372,6 +391,10 @@ export class Carvera implements Profile {
 
                 // Return result
                 log('carvera', 'Downloaded ' + data.length + ' bytes');
+
+                // Persist in cache
+                this.#saveToFileToCache(data);
+
                 return data;
             } finally {
                 reader.close();
@@ -380,53 +403,62 @@ export class Carvera implements Profile {
     }
 
     async uploadFile(path: string, data: Buffer) {
+
+        // Persist in cache
+        this.#saveToFileToCache(data);
+
+        // Do upload
         return await this._lockFiles.inLock(async () => {
             let reader = this._transport.createReader();
             try {
                 log('carvera', 'Upload file \"' + path + '\"');
                 this.stream.send('upload ' + escapeFilename(path) + '\n');
+                let start = Date.now();
 
                 //
                 // Await NACK
+                // NOTE: This part is ignored because Carvera firmware has a bug that incorrectly handle 
+                //       initial package and we need to send it immediatelly before even receiving anything.
                 //
 
-                let start = Date.now();
-                while (true) {
-                    let r = await reader.read();
-                    if (r.kind === 'text') {
-                        if (r.value === 'CCCCCCCCCC') { // Carvera sends 10 'C' characters before starting transmission
-                            break;
-                        }
-                    }
-                    if (r.kind === 'xmodem') {
-                        if (r.frame.kind === 'nack') {
-                            if (!r.frame.crc) {
-                                log('carvera', 'Received legacy CRC request');
+                // while (true) {
+                //     let r = await reader.read();
+                //     if (r.kind === 'text') {
+                //         if (r.value === 'CCCCCCCCCC') { // Carvera sends 10 'C' characters before starting transmission
+                //             break;
+                //         }
+                //     }
+                //     if (r.kind === 'xmodem') {
+                //         if (r.frame.kind === 'nack') {
+                //             if (!r.frame.crc) {
+                //                 log('carvera', 'Received legacy CRC request');
 
-                                // Send cancel
-                                this.stream.send(XMODEM_FRAME_CANCEL);
+                //                 // Send cancel
+                //                 this.stream.send(XMODEM_FRAME_CANCEL);
+                //                 this.stream.send(XMODEM_FRAME_CANCEL);
+                //                 this.stream.send(XMODEM_FRAME_CANCEL);
 
-                                throw new Error('Legacy CRC not supported');
-                            } else {
-                                break;
-                            }
-                        } else if (r.frame.kind === 'cancel') {
-                            log('carvera', 'Received upload cancel');
-                            throw new Error('Upload cancelled');
-                        }
-                    } else if (r.kind === 'end-of-transmission') {
-                        log('carvera', 'Received end of transmission');
-                        throw new Error('Upload cancelled');
-                    }
-                }
-                log('carvera', 'Upload inited in ' + (Date.now() - start) + 'ms');
+                //                 throw new Error('Legacy CRC not supported');
+                //             } else {
+                //                 break;
+                //             }
+                //         } else if (r.frame.kind === 'cancel') {
+                //             log('carvera', 'Received upload cancel');
+                //             throw new Error('Upload cancelled');
+                //         }
+                //     } else if (r.kind === 'end-of-transmission') {
+                //         log('carvera', 'Received end of transmission');
+                //         throw new Error('Upload cancelled');
+                //     }
+                // }
+                // log('carvera', 'Upload inited in ' + (Date.now() - start) + 'ms');
 
                 //
                 // Send first block - md5 of a file
                 //
 
                 let block = 0;
-                let md5 = crypto.createHash('md5').update(data).digest();
+                let md5 = Buffer.from(crypto.createHash('md5').update(data).digest().toString('hex'));
                 this.stream.send(createXModemDataFrame(block, md5));
                 block = (block + 1) % 256;
                 let remaining = data;
@@ -518,6 +550,23 @@ export class Carvera implements Profile {
         });
     }
 
+    #tryLoadFromFileFromCache(md5hash: Buffer) {
+        let r = this._storage.readFile('cache/md5/' + md5hash.toString('hex'));
+        if (r) {
+            let md5hash = crypto.createHash('md5').update(r).digest();
+            if (md5hash.equals(md5hash)) {
+                return r;
+            }
+        }
+        return null;
+    }
+
+    #saveToFileToCache(data: Buffer) {
+        let md5hash = crypto.createHash('md5').update(data).digest();
+        this._storage.writeFile('cache/md5/' + md5hash.toString('hex'), data);
+    }
+
+
     //
     // Disconnect from machine
     //
@@ -567,7 +616,7 @@ async function doReadFrame(stream: TransportStream): Promise<CarveraFrame> {
     // NOTE: We are using two separators - new line and xmodem' NACK. This is because there are no way to distinguish 
     //       some xmodem frames from text frames. We only hitting this problem with CRC request frame and machine
     //       usually sends NACK after text, so we can use it as a separator.
-    let data = await stream.readUntil([0x0A, XMODEM_NACK]); // New Line or NACK
+    let data = await stream.readUntil([0x0A, XMODEM_CAN, XMODEM_ACK, XMODEM_NACK]); // New Line or NACK
     let str = data.toString('utf8');
     if (str.endsWith('\r')) {
         str = str.slice(0, -1);

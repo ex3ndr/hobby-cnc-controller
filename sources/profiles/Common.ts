@@ -21,30 +21,46 @@ export type Vector5 = {
 }
 
 export type MachineState = {
+
+    // Firmware
     firmware: {
         version: string
     },
+
+    // Status
     status: MachineStatus;
+
+    // Positions
     machinePosition: Vector5;
     workPosition: Vector5;
+
+    // Feed
     feed: {
         current: number,
         target: number,
         scale: number
     },
+
+    // Spindle
     spindle: {
         current: number,
         target: number,
         scale: number,
         temperature: number
     },
+
+    // Vacuum
     vacuum: {
         enabled: boolean
     },
+
+    // Tool
     tool: {
         index: number,
         offset: number
     },
+
+    // Halt
     halt: {
         reason: MachineError
     } | null
@@ -85,6 +101,7 @@ export interface Profile {
 
     // Load current state
     state(): Promise<MachineState>;
+    currentFile(): Promise<string | null>;
 
     // Execute commands
     command(command: string): Promise<string>;
